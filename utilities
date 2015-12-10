@@ -11,7 +11,7 @@ rectifier <- function(x){
 }
 
 sigm <- function(x){
-  1/(1 + exp(-x))
+  return(pmax(pmin(1/(1 + exp(-x)), 0.999999), 0.000001))
 }
 
 # capping for exp overflow
