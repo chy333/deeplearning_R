@@ -1,28 +1,29 @@
-nn.ff <- function(nn, batch_x, batch_y, s){
+nn.ff <- function(nn, batch_x, batch_y, batch_w, s){
   # modification: dropout.mask returns boolean vector 
   
   # modification: add linear activation function
   # modification: add rectifier linear activation function
-  # modification: add the corresponding linear rectifier function
   # modification: add softplus activation function
-  # modification: add the corresponding softplus function
-  
+  # modification: modify sigm and tanh functions for numeric stability
   # modification: add exp output function to mimic GLM log link
   # modification: numeric stability for softmax output function
   
+  # modification: change output function to be distribution which is easier for users
+  # modification: add batch_w for weighted cost function
+  
   m <- nrow(batch_x)
-  if (nn$visible_dropout > 0) {
-    nn$dropout_mask[[1]] <- dropout.mask(ncol(batch_x), nn$visible_dropout)
-    batch_x[,!(nn$dropout_mask[[1]])] <- 0
-  }
   nn$post[[1]] <- batch_x
+  if (nn$visible_dropout > 0) {
+    nn$dropout_mask[[1]] <- dropout.mask(ncol(nn$post[[1]]), nn$visible_dropout)
+    nn$post[[1]][,!(nn$dropout_mask[[1]])] <- 0
+  }
   for (i in 2:(length(nn$size) - 1)) {
     nn$pre[[i]] <- t(nn$W[[i - 1]] %*% t(nn$post[[(i - 1)]]) + 
                        nn$B[[i - 1]])
     if (nn$activationfun == "sigm") {
       nn$post[[i]] <- sigm(nn$pre[[i]])
     }else if (nn$activationfun == "tanh") {
-      nn$post[[i]] <- tanh(nn$pre[[i]])
+      nn$post[[i]] <- 2*sigm(2*nn$pre[[i]]) - 1
     }else if (nn$activationfun == "rectifier") {
       nn$post[[i]] <- rectifier(nn$pre[[i]])      
     }else if (nn$activationfun == "softplus") {
@@ -35,36 +36,47 @@ nn.ff <- function(nn, batch_x, batch_y, s){
     if (nn$hidden_dropout > 0) {
       nn$dropout_mask[[i]] <- dropout.mask(ncol(nn$post[[i]]), 
                                            nn$hidden_dropout)
-      ((nn$post[[i]])[,!(nn$dropout_mask[[i]])]) <- 0
+      nn$post[[i]][,!(nn$dropout_mask[[i]])] <- 0
     }
   }
   i <- length(nn$size)
   nn$pre[[i]] <- t(nn$W[[i - 1]] %*% t(nn$post[[(i - 1)]]) + 
                      nn$B[[i - 1]])
-  if (nn$output == "sigm") {
+  if (nn$distribution == "binomial") {
     nn$post[[i]] <- sigm(nn$pre[[i]])
     nn$e <- batch_y - nn$post[[i]]
-    nn$L[s] <- 0.5 * sum(nn$e^2)/m
-  }else if (nn$output == "linear") {
+    nn$L[s] <- -sum(batch_w*(batch_y*log(nn$post[[i]]) + (1 - batch_y)*log(1 - nn$post[[i]])))/m
+  }else if (nn$distribution == "gaussian") {
     nn$post[[i]] <- nn$pre[[i]]
     nn$e <- batch_y - nn$post[[i]]
-    nn$L[s] <- 0.5 * sum(nn$e^2)/m
-  }else if (nn$output == "softmax") {
+    nn$L[s] <- 0.5 * sum(batch_w*(nn$e^2))/m
+  }else if (nn$distribution == "multinomial") {
     normalize.max <- apply(nn$pre[[i]], 1, max)
     nn$post[[i]] <- exp(nn$pre[[i]] - normalize.max)
     nn$post[[i]] <- nn$post[[i]]/rowSums(nn$post[[i]])
     nn$e <- batch_y - nn$post[[i]]
-    nn$L[s] <- -sum(batch_y * log(nn$post[[i]]))/m
-  }else if (nn$output == "exp") {
+    nn$L[s] <- -sum(batch_w*(batch_y * log(nn$post[[i]])))/m
+  }else if (nn$distribution == "tweedie") {
+    p <- nn$tweedie.p
     nn$post[[i]] <- exp(nn$pre[[i]])
     (nn$post[[i]])[nn$post[[i]] == Inf] <- exp(30)
     nn$e <- batch_y - nn$post[[i]]
-    nn$L[s] <- 0.5 * sum(nn$e^2)/m
+    nn$L[s] <- -sum(batch_w*(batch_y*((nn$post[[i]])^(1-p))/(1-p) - (nn$post[[i]]^(2-p))/(2-p)))/m
+  }else if (nn$distribution == "gamma") {
+    nn$post[[i]] <- exp(nn$pre[[i]])
+    (nn$post[[i]])[nn$post[[i]] == Inf] <- exp(30)
+    nn$e <- batch_y - nn$post[[i]]
+    nn$L[s] <- sum(batch_w*(batch_y/nn$post[[i]] + log(nn$post[[i]])))/m
+  }else if (nn$distribution == "poisson") {
+    nn$post[[i]] <- exp(nn$pre[[i]])
+    (nn$post[[i]])[nn$post[[i]] == Inf] <- exp(30)
+    nn$e <- batch_y - nn$post[[i]]
+    nn$L[s] <- -sum(batch_w*(batch_y*log(nn$post[[i]]) - nn$post[[i]]))/m
   }else {
-    stop("unsupport output function!")
+    stop("unsupport distribution!")
   }
   if (s%%10000 == 0) {
-    message(sprintf("####loss on step %d is : %f", s, nn$L[s]))
+    message(sprintf("####loss on the batch during step %d is : %f", s, nn$L[s]))
   }
   nn
 }
