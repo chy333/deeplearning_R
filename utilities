@@ -1,13 +1,15 @@
-# TRUE indicates the unit is retained FALSE indicates it is dropped
+# return boolean for drop out or not
+# besides it forces that at least one unit is selected for the sake of programming ease
 dropout.mask <- function(size, fraction){
-  mask <- sapply(runif(size, min = 0, max = 1), 
-                 function(x){if(x <= fraction){return(FALSE)}else{return(TRUE)}}
-                 )
-  mask
+  if(fraction >= 1){
+    stop("dropout ratio must be smaller than one!!!")
+  }
+  indx <- (runif(size, min = 0, max = 1) > fraction)
+  return(indx)
 }
 
 rectifier <- function(x){
-  sapply(x, function(x){return(max(0,x))})
+  return(pmax(x, 0))
 }
 
 sigm <- function(x){
@@ -16,6 +18,5 @@ sigm <- function(x){
 
 # capping for exp overflow
 softplus <- function(x){
-  sapply(x, 
-         function(x){if(x < 30){return(log(1 + exp(x)))}else{return(x)}})
+  return(log(1 + exp(pmax(pmin(x, 20), -20))))
 }
