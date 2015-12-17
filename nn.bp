@@ -1,0 +1,71 @@
+nn.bp <- function(nn){
+  # modification: change output to distribution 
+  # modification: change sigm option originally it means logistic output with squared error loss function
+  # modification: add tweeide poisson gamma distribution output
+  
+  # modification: change the activation derivative for tanh
+  # modificatino: add the activation derivative for rectifier softplus and linear
+  
+  # modification: change the momentum statements
+  # modification: change the vW vB storage to be the gradient before learning rate adj
+  # modification: add max norm option
+  n <- length(nn$size)
+  d <- list()
+  if (nn$distribution %in% c("binomial", "multinomial", "gaussian", "poisson")) {
+    # that is the easy form by using canonical link
+    d[[n]] <- -nn$e
+  }else if (nn$distribution == "tweedie") {
+    p <- nn$tweedie.p
+    d[[n]] <- -nn$e * (nn$post[[n]]^(1-p))
+  }else if (nn$distribution == "gamma") {
+    d[[n]] <- -nn$e * (nn$post[[n]]^(-1))
+  }else {
+    stop("unsupport activation function!")
+  }
+  for (i in (n - 1):2) {
+    if (nn$activationfun == "sigm"){
+      d_act <- nn$post[[i]] * (1 - nn$post[[i]])
+    }else if (nn$activationfun == "tanh"){
+      # the original derivative for tanh doesn't look right to me
+      # if it is somewhat polynomial approximation it should be piece-wise linear form
+#       d_act <- 1.7159 * 2/3 * (1 - 1/(1.7159)^2 * nn$post[[i]]^2)
+      d_act <- 1 - (2*sigm(2*nn$post[[i]])-1)^2
+    }else if (nn$activation == "rectifier"){
+#       if((sum(nn$post[[i]]) == 0) > 0){
+#         warning("take rectifier derivative at zero")
+#       }
+      d_act <- (nn$post[[i]] > 0 ) + 0
+    }else if (nn$activation == "linear"){
+      d_act <- 1
+    }else if (nn$activation == "softplus"){
+      d_act <- sigm(nn$post[[i]])
+    }else{
+      stop("unsupported activation function!!!")
+    }
+    d[[i]] <- (d[[i + 1]] %*% nn$W[[i]]) * d_act
+    if (nn$hidden_dropout > 0) {
+      d[[i]][,!(nn$dropout_mask[[i]])] <- 0
+#       d[[i]] <- t(t(d[[i]]) * nn$dropout_mask[[i]])
+    }
+  }
+  for (i in 1:(n - 1)) {
+    # nn$post[[i]] has been already masked if dropout exists
+    dw <- t(d[[i + 1]]) %*% nn$post[[i]]/nrow(d[[i + 1]])
+    nn$vW[[i]] <- nn$momentum * nn$vW[[i]] + dw   
+    nn$W[[i]] <- nn$W[[i]] - nn$learningrate*(nn$vW[[i]])
+    if((!is.null(nn$max.norm)) && (i < (n - 1))){
+      norms <- apply(nn$W[[i]], 1, function(x){sqrt(sum(x^2))})
+      norms.ind <- (norms > max.norm)
+      for(j in 1:nrow(nn$W[[i]])){
+        if(norms.ind[j]){
+          nn$W[[i]][j,] <- nn$W[[i]][j,]/sqrt((norms[j]/max.norm))
+        }
+      }
+    }
+    
+    db <- colMeans(d[[i + 1]])
+    nn$vB[[i]] <- nn$momentum * nn$vB[[i]] + db
+    nn$B[[i]] <- nn$B[[i]] - nn$learningrate*(nn$vB[[i]])
+  }
+  nn  
+}
