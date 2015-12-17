@@ -1,0 +1,165 @@
+nn.train <- function(x, y, weight = NULL,
+                     initW = NULL, initB = NULL, 
+                     init.vW = NULL, init.vB = NULL,
+                     hidden = c(10), 
+                     activationfun = "rectifier", 
+                     learningrate = 0.8, momentum = 0.5, learningrate_scale = 1, 
+                     distribution = "gaussian", tweedie.p = NULL,
+                     numepochs = 3, batchsize = 1000, hidden_dropout = 0.2, 
+                     visible_dropout = 0.1,
+                     max.norm = NULL,
+                     save.interval.model = FALSE,
+                     save.interval = NULL){
+  # modification: output to be distribution which is easier for use
+  # modification: add initvW and initvB to truly resume model with momentum
+  # modification: add weight option
+  # modification: add option to save intermediate model with smaller epochs
+  # modificaiton: add max norm constraint
+
+  # currently required other R functions
+  source("softplus.R")
+  source("sigm.R")
+  source("rectifier.R")
+  source("dropout.mask.R")
+  source("nn.ff.R")
+  source("nn.bp.R")
+  
+  if (!is.matrix(x)) {
+    stop("x must be a matrix!")
+  }
+  input_dim <- ncol(x)
+  output_dim <- 0
+  if (is.vector(y)) {
+    output_dim <- 1
+  }else if (is.matrix(y)) {
+    output_dim <- ncol(y)
+  }
+  if (output_dim == 0) {
+    stop("y must be a vector or matrix!")
+  }
+  
+  if ((distribution == "tweedie") && is.null(tweedie.p)){
+    warning("tweedie power is missing so default to be 1.5")
+    tweedie.p <- 1.5
+  }
+  if ((save.interval.model) && (is.null(save.interval))){
+    warning("epoch interval for saving model is missing default to be 50")
+    save.interval <- 50
+  }
+  if (is.null(weight)){
+    weight <- rep(1, nrow(x))
+  }else{
+    weight <- as.vector(weight)
+    if (length(weight) != nrow(x)){
+      stop("weight length is different from input")
+    }
+    weight <- nrow(x)*weight/sum(weight)
+  }
+  size <- c(input_dim, hidden, output_dim)
+  vW <- list()
+  vB <- list()
+  if (is.null(initW) || is.null(initB)) {
+    # so basically if no initial weights provided 
+    # no way to provide vW or vB
+    W <- list()
+    B <- list()
+    for (i in 2:length(size)) {
+      W[[i - 1]] <- matrix(runif(size[i] * size[i - 1], 
+                                 min = -0.1, max = 0.1), c(size[i], size[i - 1]))
+      B[[i - 1]] <- runif(size[i], min = --0.1, max = 0.1)
+      vW[[i - 1]] <- matrix(rep(0, size[i] * size[i - 1]), 
+                             c(size[i], size[i - 1]))
+      vB[[i - 1]] <- rep(0, size[i])
+    }
+  }else {
+    W <- initW
+    B <- initB
+    # it is possible to just supply with W and B but not previous gradient vW and vB
+    if ((!is.null(init.vW)) && (!is.null(init.vB))){
+      vW <- init.vW
+      vB <- init.vB
+    }
+    for (i in 2:length(size)) {
+      if ((is.null(init.vW)) || (is.null(init.vB))){      
+        vW[[i - 1]] <- matrix(rep(0, size[i] * size[i - 1]), 
+                            c(size[i], size[i - 1]))
+        vB[[i - 1]] <- rep(0, size[i])
+      }
+      if (nrow(W[[i - 1]]) != size[i] || ncol(W[[i - 1]]) != 
+          size[i - 1]) {
+        stop("init W size is not eq to network size!")
+      }
+      if (length(B[[i - 1]]) != size[i]) {
+        stop("init B size is not eq to network size!")
+      }
+      if (nrow(vW[[i - 1]]) != size[i] || ncol(vW[[i - 1]]) != 
+          size[i - 1]) {
+        stop("init vW size is not eq to network size!")
+      }
+      if (length(vB[[i - 1]]) != size[i]) {
+        stop("init vB size is not eq to network size!")
+      }
+    }
+  }
+  nn <- list(input_dim = input_dim, output_dim = output_dim, 
+             hidden = hidden, size = size, activationfun = activationfun, 
+             learningrate = learningrate, momentum = momentum, learningrate_scale = learningrate_scale, 
+             hidden_dropout = hidden_dropout, visible_dropout = visible_dropout, 
+             distribution = distribution, tweedie.p = tweedie.p,
+             max.norm = max.norm, W = W, vW = vW, B = B, vB = vB)
+  interval.nn <- list()
+  m <- nrow(x)
+  numbatches <- m/batchsize
+  s <- 0
+  curr_epoch <- 0
+  for (i in 1:numepochs) {
+    curr_epoch <- curr_epoch + 1
+    randperm <- sample(1:m, m)
+    if (numbatches >= 1) {
+      for (l in 1:numbatches) {
+        s <- s + 1
+        batch_x <- x[randperm[((l - 1) * batchsize + 
+                                 1):(l * batchsize)], ]
+        batch_w <- weight[randperm[((l - 1) * batchsize + 
+                                 1):(l * batchsize)]]
+        if (is.vector(y)) {
+          batch_y <- y[randperm[((l - 1) * batchsize + 
+                                   1):(l * batchsize)]]
+        }else if (is.matrix(y)) {
+          batch_y <- y[randperm[((l - 1) * batchsize + 
+                                   1):(l * batchsize)], ]
+        }
+        if (s == 1){
+          nn <- nn.ff(nn, batch_x, batch_y, batch_w, s, curr_epoch)
+        }
+        nn <- nn.bp(nn)
+        nn <- nn.ff(nn, batch_x, batch_y, batch_w, s, curr_epoch)
+      }
+    }
+    if (numbatches > as.integer(numbatches)) {
+      batch_x <- x[randperm[(as.integer(numbatches) * batchsize):m], 
+                   ]
+      batch_w <- weight[randperm[(as.integer(numbatches) * 
+                                    batchsize):m]]
+      if (is.vector(y)) {
+        batch_y <- y[randperm[(as.integer(numbatches) * 
+                                 batchsize):m]]
+      }
+      else if (is.matrix(y)) {
+        batch_y <- y[randperm[(as.integer(numbatches) * 
+                                 batchsize):m], ]
+      }
+      s <- s + 1
+      if (s == 1){
+        nn <- nn.ff(nn, batch_x, batch_y, batch_w, s, curr_epoch)
+      }
+      nn <- nn.bp(nn)
+      nn <- nn.ff(nn, batch_x, batch_y, batch_w, s, curr_epoch)
+    }
+    if ((save.interval.model) && (i %% save.interval == 0)){
+      interval.nn[[as.integer(i/save.interval)]] <- nn
+    }
+    nn$learningrate <- nn$learningrate * nn$learningrate_scale
+  }
+  return(list(model = nn, interval.model = interval.nn))
+}
