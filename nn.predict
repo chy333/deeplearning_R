@@ -1,0 +1,57 @@
+nn.predict <- function (nn, x) {
+  # modification: predictions when dropout enabled
+  # modification: activation and distribution to be consistent with other functions
+  
+  # modification: matrix addition corrected
+  # currently required other R functions
+  source("softplus.R")
+  source("sigm.R")
+  source("rectifier.R")
+
+  m <- nrow(x)
+  post <- x
+  for (i in 2:(length(nn$size) - 1)) {
+#     pre <- t((nn$W[[i - 1]] %*% t(post)) + nn$B[[i - 1]])
+    if (i == 2){
+      pre <- t((nn$W[[i - 1]] %*% t(post)) * (1 - nn$visible_dropout) + nn$B[[i - 1]])      
+    }else{
+      pre <- t((nn$W[[i - 1]] %*% t(post)) * (1 - nn$hidden_dropout) + nn$B[[i - 1]])      
+    }
+    if (nn$activationfun == "sigm") {
+      post <- sigm(pre)
+    }else if (nn$activationfun == "tanh") {
+      post <- 2*sigm(2*pre) - 1
+    }else if (nn$activationfun == "rectifier"){
+      post <- rectifier(pre)
+    }else if (nn$activationfun == "softplus"){
+      post <- softplus(pre)
+    }else if (nn$activationfun == "linear"){
+      post <- pre
+    }else {
+      stop("unsupport activation function in trained neural network!!!")
+    }
+    # this is original weight scaling
+    # which also scale the bias term and doesn't include visible layer and output layer
+    # and scaling is AFTER activation
+    
+#     post <- post * (1 - nn$hidden_dropout)
+  }
+  i <- length(nn$size)
+#   pre <- t((nn$W[[i - 1]] %*% t(post)) + nn$B[[i - 1]])
+  pre <- t((nn$W[[i - 1]] %*% t(post)) * (1 - nn$hidden_dropout) + nn$B[[i - 1]])
+  if (nn$distribution == "binomial") {
+    post <- sigm(pre)
+  }else if (nn$distribution == "gaussian") {
+    post <- pre
+  }else if (nn$distribution == "multinomial") {
+    normalize.max <- apply(pre, 1, max)
+    post <- exp(pre - normalize.max)
+    post <- post/rowSums(post)
+  }else if(nn$distribution %in% c("tweedie", "gamma", "poisson")){
+    post <- exp(pmin(pre, 20))    
+  }
+  else {
+    stop("unsupport output function!")
+  }
+  post
+}
