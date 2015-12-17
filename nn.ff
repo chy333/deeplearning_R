@@ -1,5 +1,5 @@
-nn.ff <- function(nn, batch_x, batch_y, batch_w, s){
-  # modification: dropout.mask returns boolean vector 
+nn.ff <- function(nn, batch_x, batch_y, batch_w, s, curr_epoch){
+  # modification: dropout.mask to return boolean
   
   # modification: add linear activation function
   # modification: add rectifier linear activation function
@@ -7,14 +7,15 @@ nn.ff <- function(nn, batch_x, batch_y, batch_w, s){
   # modification: modify sigm and tanh functions for numeric stability
   # modification: add exp output function to mimic GLM log link
   # modification: numeric stability for softmax output function
-  
   # modification: change output function to be distribution which is easier for users
   # modification: add batch_w for weighted cost function
-  
+  # modification: suppress message of current loss on batch
+
   m <- nrow(batch_x)
   nn$post[[1]] <- batch_x
   if (nn$visible_dropout > 0) {
     nn$dropout_mask[[1]] <- dropout.mask(ncol(nn$post[[1]]), nn$visible_dropout)
+#     nn$post[[1]] <- nn$post[[1]][,nn$dropout_mask[[1]]]
     nn$post[[1]][,!(nn$dropout_mask[[1]])] <- 0
   }
   for (i in 2:(length(nn$size) - 1)) {
@@ -44,39 +45,42 @@ nn.ff <- function(nn, batch_x, batch_y, batch_w, s){
                      nn$B[[i - 1]])
   if (nn$distribution == "binomial") {
     nn$post[[i]] <- sigm(nn$pre[[i]])
-    nn$e <- batch_y - nn$post[[i]]
+    nn$e <- batch_w * (batch_y - nn$post[[i]])
     nn$L[s] <- -sum(batch_w*(batch_y*log(nn$post[[i]]) + (1 - batch_y)*log(1 - nn$post[[i]])))/m
+    nn$curr_epoch[s] <- curr_epoch
   }else if (nn$distribution == "gaussian") {
     nn$post[[i]] <- nn$pre[[i]]
-    nn$e <- batch_y - nn$post[[i]]
+    nn$e <- batch_w * (batch_y - nn$post[[i]])
     nn$L[s] <- 0.5 * sum(batch_w*(nn$e^2))/m
+    nn$curr_epoch[s] <- curr_epoch
   }else if (nn$distribution == "multinomial") {
     normalize.max <- apply(nn$pre[[i]], 1, max)
     nn$post[[i]] <- exp(nn$pre[[i]] - normalize.max)
     nn$post[[i]] <- nn$post[[i]]/rowSums(nn$post[[i]])
-    nn$e <- batch_y - nn$post[[i]]
+    nn$e <- batch_w * (batch_y - nn$post[[i]])
     nn$L[s] <- -sum(batch_w*(batch_y * log(nn$post[[i]])))/m
+    nn$curr_epoch[s] <- curr_epoch
   }else if (nn$distribution == "tweedie") {
     p <- nn$tweedie.p
-    nn$post[[i]] <- exp(nn$pre[[i]])
-    (nn$post[[i]])[nn$post[[i]] == Inf] <- exp(30)
-    nn$e <- batch_y - nn$post[[i]]
+    nn$post[[i]] <- exp(pmin(nn$pre[[i]], 20))
+    nn$e <- batch_w *(batch_y - nn$post[[i]])
     nn$L[s] <- -sum(batch_w*(batch_y*((nn$post[[i]])^(1-p))/(1-p) - (nn$post[[i]]^(2-p))/(2-p)))/m
+    nn$curr_epoch[s] <- curr_epoch
   }else if (nn$distribution == "gamma") {
-    nn$post[[i]] <- exp(nn$pre[[i]])
-    (nn$post[[i]])[nn$post[[i]] == Inf] <- exp(30)
-    nn$e <- batch_y - nn$post[[i]]
+    nn$post[[i]] <- exp(pmin(nn$pre[[i]], 20))
+    nn$e <- batch_w * (batch_y - nn$post[[i]])
     nn$L[s] <- sum(batch_w*(batch_y/nn$post[[i]] + log(nn$post[[i]])))/m
+    nn$curr_epoch[s] <- curr_epoch
   }else if (nn$distribution == "poisson") {
-    nn$post[[i]] <- exp(nn$pre[[i]])
-    (nn$post[[i]])[nn$post[[i]] == Inf] <- exp(30)
-    nn$e <- batch_y - nn$post[[i]]
+    nn$post[[i]] <- exp(pmin(nn$pre[[i]], 20))
+    nn$e <- batch_w * (batch_y - nn$post[[i]])
     nn$L[s] <- -sum(batch_w*(batch_y*log(nn$post[[i]]) - nn$post[[i]]))/m
+    nn$curr_epoch[s] <- curr_epoch
   }else {
     stop("unsupport distribution!")
   }
-  if (s%%10000 == 0) {
-    message(sprintf("####loss on the batch during step %d is : %f", s, nn$L[s]))
-  }
+#   if (s%%10000 == 0) {
+#     message(sprintf("####loss on the batch during step %d is : %f", s, nn$L[s]))
+#   }
   nn
 }
